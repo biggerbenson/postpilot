@@ -35,13 +35,13 @@
     "lucide-react": "^0.460.0",
     "next": "15.0.3",
     "next-auth": "^4.24.10",
+    "nodemailer": "^7.0.13",
     "openai": "^4.73.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.53.2",
     "tailwind-merge": "^2.5.4",
     "tailwindcss-animate": "^1.0.7",
-    "nodemailer": "^6.9.15",
     "zod": "^3.23.8"
   },
   "devDependencies": {
