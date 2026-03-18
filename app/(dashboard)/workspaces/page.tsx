@@ -12,7 +12,7 @@ export default async function WorkspacesPage() {
   const workspaces = await prisma.workspace.findMany({
     where: { ownerId: user.id, deletedAt: null },
     include: {
-      _count: { select: { mediaAssets: true, posts: true, socialAccounts: true, brandProfile: true,} },
+      _count: { select: { mediaAssets: true, posts: true, socialAccounts: true, } },
       
     },
     orderBy: { createdAt: "desc" },
