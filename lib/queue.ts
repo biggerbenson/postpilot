@@ -2,21 +2,35 @@ import { Queue, Worker, type Job } from "bullmq";
 
 export const PUBLISH_QUEUE_NAME = "publish";
 
-const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+const redisUrl = process.env.REDIS_URL;
 
-const connection = {
-  url: redisUrl,
-  maxRetriesPerRequest: null as null,
-};
+const connection = redisUrl
+  ? {
+      url: redisUrl,
+      maxRetriesPerRequest: null as null,
+    }
+  : null;
 
-export const publishQueue = new Queue(PUBLISH_QUEUE_NAME, {
-  connection,
-  defaultJobOptions: {
-    attempts: 3,
-    backoff: { type: "exponential", delay: 2000 },
-    removeOnComplete: { count: 1000 },
-  },
-});
+let queueInstance: Queue<PublishJobData> | null = null;
+
+function getPublishQueue() {
+  if (!connection) {
+    throw new Error("REDIS_URL is not set");
+  }
+
+  if (!queueInstance) {
+    queueInstance = new Queue<PublishJobData>(PUBLISH_QUEUE_NAME, {
+      connection,
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: "exponential", delay: 2000 },
+        removeOnComplete: { count: 1000 },
+      },
+    });
+  }
+
+  return queueInstance;
+}
 
 export interface PublishJobData {
   postId: string;
@@ -27,7 +41,7 @@ export interface PublishJobData {
 export async function addPublishJob(
   data: PublishJobData
 ): Promise<Job<PublishJobData>> {
-  return publishQueue.add("publish", data, {
+  return getPublishQueue().add("publish", data, {
     jobId: data.postId,
   });
 }
@@ -35,6 +49,10 @@ export async function addPublishJob(
 export function createPublishWorker(
   processor: (job: Job<PublishJobData>) => Promise<void>
 ): Worker<PublishJobData> {
+  if (!connection) {
+    throw new Error("REDIS_URL is not set");
+  }
+
   return new Worker<PublishJobData>(PUBLISH_QUEUE_NAME, processor, {
     connection,
     concurrency: 5,
