@@ -1,12 +1,13 @@
-import { Queue, Worker, type Job } from "bullmq";
-import IORedis from "ioredis";
-
-const connection = new IORedis(
-  process.env.REDIS_URL ?? "redis://localhost:6379",
-  { maxRetriesPerRequest: null }
-);
+import { Queue, Worker, type Job, type ConnectionOptions } from "bullmq";
 
 export const PUBLISH_QUEUE_NAME = "publish";
+
+const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+
+export const connection: ConnectionOptions = {
+  url: redisUrl,
+  maxRetriesPerRequest: null,
+};
 
 export const publishQueue = new Queue(PUBLISH_QUEUE_NAME, {
   connection,
