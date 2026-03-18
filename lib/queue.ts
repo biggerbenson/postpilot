@@ -1,12 +1,12 @@
-import { Queue, Worker, type Job, type ConnectionOptions } from "bullmq";
+import { Queue, Worker, type Job } from "bullmq";
 
 export const PUBLISH_QUEUE_NAME = "publish";
 
 const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 
-export const connection: ConnectionOptions = {
+const connection = {
   url: redisUrl,
-  maxRetriesPerRequest: null,
+  maxRetriesPerRequest: null as null,
 };
 
 export const publishQueue = new Queue(PUBLISH_QUEUE_NAME, {
