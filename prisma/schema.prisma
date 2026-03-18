@@ -1,0 +1,550 @@
+// Social Media Auto Poster - Prisma Schema
+// PostgreSQL, multi-tenant workspace-scoped design
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ ENUMS ============
+
+enum Platform {
+  INSTAGRAM
+  FACEBOOK
+  LINKEDIN
+  X
+  TIKTOK
+}
+
+enum PostStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  CANCELLED
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+enum ConnectionStatus {
+  PENDING
+  CONNECTED
+  EXPIRED
+  ERROR
+  DISCONNECTED
+}
+
+enum ApprovalMode {
+  MANUAL
+  AUTO
+}
+
+enum PublishResultType {
+  SUCCESS
+  FAILURE
+  RETRY
+}
+
+enum ActivityAction {
+  WORKSPACE_CREATED
+  WORKSPACE_UPDATED
+  WORKSPACE_DELETED
+  MEDIA_UPLOADED
+  MEDIA_DELETED
+  POST_GENERATED
+  POST_APPROVED
+  POST_SCHEDULED
+  POST_RESCHEDULED
+  PUBLISH_ATTEMPTED
+  PUBLISH_SUCCEEDED
+  PUBLISH_FAILED
+  ACCOUNT_CONNECTED
+  ACCOUNT_DISCONNECTED
+}
+
+enum PlanName {
+  FREE
+  STARTER
+  PRO
+  BUSINESS
+  AGENCY
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+// ============ MODELS ============
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  name          String?
+  displayName   String?   @map("display_name")
+  phone         String?
+  image         String?
+  role          UserRole  @default(USER)
+  suspendedAt   DateTime? @map("suspended_at")
+  emailVerified DateTime? @map("email_verified")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  workspaces     Workspace[]
+  settings       UserSettings?
+  accounts       Account[] // NextAuth accounts if OAuth added later
+  sessions       Session[]
+  subscription   Subscription?
+  usageRecords   UsageRecord[]
+  adminAuditLogs AdminAuditLog[] @relation("AdminActor")
+
+  paymentAttempts PaymentAttempt[]
+  transactions    Transaction[]
+
+  @@map("users")
+}
+
+model AdminAuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String   @map("actor_user_id")
+  action      String
+  targetType  String?  @map("target_type")
+  targetId    String?  @map("target_id")
+  summary     String
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  actor User @relation("AdminActor", fields: [actorUserId], references: [id], onDelete: Cascade)
+
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("admin_audit_logs")
+}
+
+enum SettingGroup {
+  GENERAL
+  APPEARANCE
+  AI
+  EMAIL
+  PAYMENTS
+  PLATFORM
+  FOOTER
+  SECURITY
+}
+
+model AdminSetting {
+  id    String       @id @default(cuid())
+  group SettingGroup
+  key   String
+
+  // Non-secret structured values
+  valueJson Json? @map("value_json")
+
+  // Secret values (encrypted at rest)
+  isSecret       Boolean @default(false) @map("is_secret")
+  encryptedValue String? @map("encrypted_value") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([group, key])
+  @@index([group])
+  @@map("admin_settings")
+}
+
+enum PaymentProvider {
+  STRIPE
+  PAYPAL
+  FLUTTERWAVE
+  PESAPAL
+  PAYSTACK
+  MANUAL
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  CANCELED
+}
+
+model PaymentAttempt {
+  id          String          @id @default(cuid())
+  userId      String          @map("user_id")
+  provider    PaymentProvider
+  status      PaymentStatus   @default(PENDING)
+  amountCents Int             @map("amount_cents")
+  currency    String          @default("USD")
+  plan        PlanName?
+  reference   String?         @unique
+  metadata    Json?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  paidAt    DateTime? @map("paid_at")
+  failedAt  DateTime? @map("failed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([provider, status, createdAt])
+  @@index([userId, createdAt])
+  @@map("payment_attempts")
+}
+
+model Transaction {
+  id          String          @id @default(cuid())
+  userId      String          @map("user_id")
+  provider    PaymentProvider
+  amountCents Int             @map("amount_cents")
+  currency    String          @default("USD")
+  reference   String?         @unique
+  metadata    Json?
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([provider, createdAt])
+  @@index([userId, createdAt])
+  @@map("transactions")
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+model Coupon {
+  id           String       @id @default(cuid())
+  code         String       @unique
+  type         DiscountType
+  amount       Int // percent (0-100) or cents depending on type
+  active       Boolean      @default(true)
+  usageLimit   Int?         @map("usage_limit")
+  perUserLimit Int?         @map("per_user_limit")
+  usedCount    Int          @default(0) @map("used_count")
+  validFrom    DateTime?    @map("valid_from")
+  expiresAt    DateTime?    @map("expires_at")
+  allowedPlans PlanName[]   @default([]) @map("allowed_plans")
+  recurring    Boolean      @default(false)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  @@index([active, expiresAt])
+  @@map("coupons")
+}
+
+model Subscription {
+  id     String             @id @default(cuid())
+  userId String             @unique @map("user_id")
+  plan   PlanName           @default(FREE)
+  status SubscriptionStatus @default(ACTIVE)
+
+  // Billing provider readiness (Stripe/etc)
+  provider               String? // e.g. "stripe"
+  providerCustomerId     String? @map("provider_customer_id")
+  providerSubscriptionId String? @map("provider_subscription_id")
+
+  // Current billing period boundaries (used for usage resets)
+  currentPeriodStart DateTime @map("current_period_start")
+  currentPeriodEnd   DateTime @map("current_period_end")
+
+  // Pricing metadata (source of truth is still app plan config)
+  priceCents        Int     @default(0) @map("price_cents")
+  interval          String  @default("month") // "month"
+  cancelAtPeriodEnd Boolean @default(false) @map("cancel_at_period_end")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([plan])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+model UsageRecord {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  periodStart DateTime @map("period_start")
+  periodEnd   DateTime @map("period_end")
+
+  // AI usage
+  aiGenerations Int @default(0) @map("ai_generations")
+  regenerations Int @default(0) @map("regenerations")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, periodStart])
+  @@index([userId, periodStart])
+  @@map("usage_records")
+}
+
+// NextAuth adapter models (for future OAuth)
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model UserSettings {
+  id                      String       @id @default(cuid())
+  userId                  String       @unique @map("user_id")
+  timezone                String       @default("UTC")
+  defaultApprovalMode     ApprovalMode @default(MANUAL) @map("default_approval_mode")
+  defaultPostingFrequency String?      @map("default_posting_frequency") // e.g. "daily", "weekdays"
+  defaultPostingTimes     String?      @map("default_posting_times") // JSON array of "09:00", "14:00"
+
+  // User-facing notifications (delivery mechanisms are implemented elsewhere)
+  notificationsEnabled        Boolean @default(true) @map("notifications_enabled")
+  notifyOnPostPublished       Boolean @default(true) @map("notify_post_published")
+  notifyOnPostFailed          Boolean @default(true) @map("notify_post_failed")
+  notifyOnApprovalRequired    Boolean @default(true) @map("notify_approval_required")
+  notifyOnAccountDisconnected Boolean @default(true) @map("notify_account_disconnected")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+model Workspace {
+  id        String    @id @default(cuid())
+  ownerId   String    @map("owner_id")
+  name      String
+  slug      String? // optional URL-friendly slug
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  owner          User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  brandProfile   BrandProfile?
+  socialAccounts SocialAccount[]
+  mediaAssets    MediaAsset[]
+  posts          Post[]
+  activityLogs   ActivityLog[]
+
+  @@index([ownerId])
+  @@index([deletedAt])
+  @@map("workspaces")
+}
+
+model BrandProfile {
+  id          String @id @default(cuid())
+  workspaceId String @unique @map("workspace_id")
+
+  // Business
+  businessType     String? @map("business_type")
+  shortDescription String? @map("short_description") @db.Text
+  longDescription  String? @map("long_description") @db.Text
+  targetAudience   String? @map("target_audience") @db.Text
+  toneOfVoice      String? @map("tone_of_voice")
+  mainGoals        String? @map("main_goals") @db.Text // sales, awareness, engagement, traffic
+  productsServices String? @map("products_services") @db.Text
+  website          String?
+  location         String?
+
+  // Content
+  hashtags              String? @map("hashtags") @db.Text
+  keywordThemes         String? @map("keyword_themes") @db.Text
+  preferredPostingStyle String? @map("preferred_posting_style")
+  postingFrequency      String? @map("posting_frequency")
+  postingDays           String? @map("posting_days") // e.g. "mon,tue,wed,thu,fri"
+  preferredTimes        String? @map("preferred_times") // JSON array "09:00", "14:00", "18:00"
+  ctaStyle              String? @map("cta_style")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("brand_profiles")
+}
+
+model SocialAccount {
+  id             String           @id @default(cuid())
+  workspaceId    String           @map("workspace_id")
+  platform       Platform
+  accountName    String           @map("account_name")
+  accountId      String?          @map("account_id") // provider's user/page id
+  accessToken    String?          @map("access_token") @db.Text // encrypted in prod
+  refreshToken   String?          @map("refresh_token") @db.Text
+  tokenExpiresAt DateTime?        @map("token_expires_at")
+  status         ConnectionStatus @default(PENDING)
+  metadata       Json? // extra provider-specific data
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  posts     Post[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, platform])
+  @@map("social_accounts")
+}
+
+model MediaAsset {
+  id           String  @id @default(cuid())
+  workspaceId  String  @map("workspace_id")
+  uploadedById String? @map("uploaded_by_id")
+
+  filePath      String    @map("file_path")
+  fileUrl       String?   @map("file_url") // public URL for MVP local or S3
+  fileName      String    @map("file_name")
+  mimeType      String    @map("mime_type")
+  fileSize      Int       @map("file_size") // bytes
+  mediaType     MediaType @map("media_type")
+  altCaption    String?   @map("alt_caption") @db.Text
+  tags          String[]  @default([])
+  campaignNotes String?   @map("campaign_notes") @db.Text
+  status        String    @default("active") // active, archived, deleted
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  postMedia PostMedia[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, mediaType])
+  @@map("media_assets")
+}
+
+model Post {
+  id              String @id @default(cuid())
+  workspaceId     String @map("workspace_id")
+  socialAccountId String @map("social_account_id")
+
+  caption       String     @db.Text
+  shortCaption  String?    @map("short_caption") @db.Text
+  headline      String?    @db.Text
+  cta           String?
+  hashtags      String?    @db.Text
+  platformNotes String?    @map("platform_notes") @db.Text
+  platform      Platform
+  status        PostStatus @default(DRAFT)
+  scheduledAt   DateTime?  @map("scheduled_at")
+  publishedAt   DateTime?  @map("published_at")
+  errorMessage  String?    @map("error_message") @db.Text
+  publishResult Json?      @map("publish_result") // mock or real response
+  retryCount    Int        @default(0) @map("retry_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Restrict)
+  media         PostMedia[]
+  publishLogs   PublishLog[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([scheduledAt])
+  @@index([workspaceId, scheduledAt])
+  @@map("posts")
+}
+
+model PostMedia {
+  id           String @id @default(cuid())
+  postId       String @map("post_id")
+  mediaAssetId String @map("media_asset_id")
+  sortOrder    Int    @default(0) @map("sort_order")
+
+  post  Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  media MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, mediaAssetId])
+  @@index([postId])
+  @@map("post_media")
+}
+
+model PublishLog {
+  id          String            @id @default(cuid())
+  postId      String            @map("post_id")
+  resultType  PublishResultType @map("result_type")
+  message     String?           @db.Text
+  response    Json?
+  attemptedAt DateTime          @default(now()) @map("attempted_at")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@map("publish_logs")
+}
+
+model ActivityLog {
+  id          String         @id @default(cuid())
+  workspaceId String         @map("workspace_id")
+  userId      String?        @map("user_id")
+  action      ActivityAction
+  entityType  String?        @map("entity_type") // workspace, media, post, account
+  entityId    String?        @map("entity_id")
+  metadata    Json?
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, createdAt])
+  @@map("activity_logs")
+}
