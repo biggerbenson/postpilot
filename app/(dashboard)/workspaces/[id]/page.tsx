@@ -4,7 +4,6 @@ import { getCurrentUser } from "@/server/auth";
 import { prisma } from "@/lib/db";
 import { assertWorkspaceAccess } from "@/server/services/workspace";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { WorkspaceForm } from "@/features/workspace/workspace-form";
 
 export default async function WorkspaceDetailPage({
@@ -16,7 +15,8 @@ export default async function WorkspaceDetailPage({
   if (!user) redirect("/login");
 
   const { id } = await params;
-  let workspace: Awaited<ReturnType<typeof prisma.workspace.findUnique>>;
+
+  let workspace = null;
   try {
     await assertWorkspaceAccess(id, user.id);
     workspace = await prisma.workspace.findUnique({
