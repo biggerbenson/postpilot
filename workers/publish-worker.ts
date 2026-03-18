@@ -1,8 +1,13 @@
 import type { Job } from "bullmq";
+import { Prisma, PublishResultType } from "@prisma/client";
 import { createPublishWorker, type PublishJobData } from "@/lib/queue";
 import { prisma } from "@/lib/db";
 import { publish } from "@/server/services/publish";
-import { PublishResultType } from "@prisma/client";
+
+function toJsonValue(value: unknown): Prisma.InputJsonValue | undefined {
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
 
 async function processPublishJob(job: Job<PublishJobData>) {
   const { postId, workspaceId, socialAccountId } = job.data;
@@ -11,6 +16,7 @@ async function processPublishJob(job: Job<PublishJobData>) {
     where: { id: postId, workspaceId },
     include: { media: { include: { media: true } } },
   });
+
   const account = await prisma.socialAccount.findFirst({
     where: { id: socialAccountId, workspaceId },
   });
@@ -24,6 +30,7 @@ async function processPublishJob(job: Job<PublishJobData>) {
         publishResult: { error: "not_found" },
       },
     });
+
     await prisma.publishLog.create({
       data: {
         postId,
@@ -31,6 +38,7 @@ async function processPublishJob(job: Job<PublishJobData>) {
         message: "Post or account not found",
       },
     });
+
     return;
   }
 
@@ -53,15 +61,18 @@ async function processPublishJob(job: Job<PublishJobData>) {
           status: "PUBLISHED",
           publishedAt: new Date(),
           errorMessage: null,
-          publishResult: result.response ?? { success: true, externalId: result.externalId },
+          publishResult: toJsonValue(
+            result.response ?? { success: true, externalId: result.externalId }
+          ),
         },
       });
+
       await prisma.publishLog.create({
         data: {
           postId,
           resultType: PublishResultType.SUCCESS,
           message: result.message ?? undefined,
-          response: result.response,
+          response: toJsonValue(result.response),
         },
       });
     } else {
@@ -70,21 +81,23 @@ async function processPublishJob(job: Job<PublishJobData>) {
         data: {
           status: "FAILED",
           errorMessage: result.message ?? "Unknown error",
-          publishResult: result.response,
+          publishResult: toJsonValue(result.response),
           retryCount: { increment: 1 },
         },
       });
+
       await prisma.publishLog.create({
         data: {
           postId,
           resultType: PublishResultType.FAILURE,
           message: result.message,
-          response: result.response,
+          response: toJsonValue(result.response),
         },
       });
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : "Publish error";
+
     await prisma.post.update({
       where: { id: postId },
       data: {
@@ -94,6 +107,7 @@ async function processPublishJob(job: Job<PublishJobData>) {
         retryCount: { increment: 1 },
       },
     });
+
     await prisma.publishLog.create({
       data: {
         postId,
@@ -101,6 +115,7 @@ async function processPublishJob(job: Job<PublishJobData>) {
         message,
       },
     });
+
     throw e;
   }
 }
